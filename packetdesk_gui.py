@@ -293,7 +293,7 @@ def normalize_target(value: str) -> str:
 
 def fmt_ms(value: Optional[float]) -> str:
     if value is None:
-        return "â€”"
+        return "—"
     if value < 1:
         return "<1"
     return f"{value:.0f}"
@@ -885,7 +885,7 @@ class TargetTab(QtWidgets.QWidget):
         bottom_layout.setContentsMargins(6, 6, 6, 6)
         bottom_layout.setSpacing(4)
 
-        self.timeline_status_label = QtWidgets.QLabel("Final target: â€”   Successful samples: 0   Running avg: â€” ms   Loss: â€”")
+        self.timeline_status_label = QtWidgets.QLabel("Final target: —   Successful samples: 0   Running avg: — ms   Loss: —")
         bottom_layout.addWidget(self.timeline_status_label)
 
         self.timeline_plot = TimelinePlot()
@@ -897,7 +897,7 @@ class TargetTab(QtWidgets.QWidget):
         splitter.setStretchFactor(1, 1)
         root.addWidget(splitter, 1)
 
-        self.summary_label = QtWidgets.QLabel("Selected hop â€”   Avg: â€” ms   Loss: â€”   Sets: 0")
+        self.summary_label = QtWidgets.QLabel("Selected hop —   Avg: — ms   Loss: —   Sets: 0")
         root.addWidget(self.summary_label)
 
     def _target_text_changed(self, text: str) -> None:
@@ -989,20 +989,20 @@ class TargetTab(QtWidgets.QWidget):
         self.path_plot.clear_dynamic()
         self.timeline_plot.set_selected_hop(None)
         self.timeline_plot.update_history([])
-        self.timeline_status_label.setText("Final target: â€”   Successful samples: 0   Running avg: â€” ms   Loss: â€”")
-        self.summary_label.setText("Selected hop â€”   Avg: â€” ms   Loss: â€”   Sets: 0")
+        self.timeline_status_label.setText("Final target: —   Successful samples: 0   Running avg: — ms   Loss: —")
+        self.summary_label.setText("Selected hop —   Avg: — ms   Loss: —   Sets: 0")
         self.snapshot_changed.emit(self.snapshot())
 
     def snapshot(self) -> Dict[str, object]:
-        avg = "â€”"
-        loss = "â€”"
+        avg = "—"
+        loss = "—"
         sets = 0
         if self._rows:
             final_row = self._rows[-1]
             avg = fmt_ms(final_row.get("avg_ms"))
             loss = fmt_percent(float(final_row.get("loss_percent", 0.0)))
             sets = int(final_row.get("samples", 0))
-        updated = "â€”"
+        updated = "—"
         if self._target_timeline_samples:
             updated = time.strftime("%H:%M:%S", time.localtime(float(self._target_timeline_samples[-1]["timestamp"])))
         return {
@@ -1102,7 +1102,7 @@ class TargetTab(QtWidgets.QWidget):
 
     def _update_timeline_status(self, hop: Optional[int], samples: List[Dict[str, object]]) -> None:
         if hop is None:
-            self.timeline_status_label.setText("Final target: â€”   Successful samples: 0   Running avg: â€” ms   Loss: â€”")
+            self.timeline_status_label.setText("Final target: —   Successful samples: 0   Running avg: — ms   Loss: —")
             return
 
         success_values = [
@@ -1111,9 +1111,9 @@ class TargetTab(QtWidgets.QWidget):
             if sample.get("latency_ms") is not None
         ]
         success_count = len(success_values)
-        running_avg_text = "â€”" if not success_values else f"{(sum(success_values) / success_count):.1f}"
+        running_avg_text = "—" if not success_values else f"{(sum(success_values) / success_count):.1f}"
 
-        loss_text = "â€”"
+        loss_text = "—"
         for row in self._rows:
             if int(row["hop"]) == hop:
                 loss_text = fmt_percent(float(row.get("loss_percent", 0.0)))
@@ -1125,7 +1125,7 @@ class TargetTab(QtWidgets.QWidget):
 
     def _update_summary(self) -> None:
         if not self._rows:
-            self.summary_label.setText("Selected hop â€”   Avg: â€” ms   Loss: â€”   Sets: 0")
+            self.summary_label.setText("Selected hop —   Avg: — ms   Loss: —   Sets: 0")
             return
 
         selected_row = None
@@ -3877,12 +3877,12 @@ class OverviewTab(QtWidgets.QWidget):
         for row_idx, snapshot in enumerate(snapshots):
             values = [
                 str(snapshot.get("tab_name", "")),
-                str(snapshot.get("target", "â€”")),
+                str(snapshot.get("target", "—")),
                 str(snapshot.get("status", "Idle")),
                 str(snapshot.get("sets", 0)),
-                str(snapshot.get("avg", "â€”")),
-                str(snapshot.get("loss", "â€”")),
-                str(snapshot.get("updated", "â€”")),
+                str(snapshot.get("avg", "—")),
+                str(snapshot.get("loss", "—")),
+                str(snapshot.get("updated", "—")),
             ]
             for col, value in enumerate(values):
                 item = QtWidgets.QTableWidgetItem(value)
@@ -3981,7 +3981,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_statusbar(self) -> None:
         self.status_label = QtWidgets.QLabel("Ready.")
         self.statusBar().addWidget(self.status_label, 1)
-        self.summary_label = QtWidgets.QLabel("Avg: â€”   Loss: â€”   Sets: 0")
+        self.summary_label = QtWidgets.QLabel("Avg: —   Loss: —   Sets: 0")
         self.statusBar().addPermanentWidget(self.summary_label)
 
     def _apply_style(self) -> None:
@@ -4142,7 +4142,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         snap = tab.snapshot()
         self.status_label.setText(str(snap.get("status", "Ready.")))
-        self.summary_label.setText(str(snap.get("summary", "Avg: â€”   Loss: â€”   Sets: 0")))
+        self.summary_label.setText(str(snap.get("summary", "Avg: —   Loss: —   Sets: 0")))
 
     @QtCore.Slot(int)
     def _on_current_tab_changed(self, _index: int) -> None:
