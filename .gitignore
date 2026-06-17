@@ -15,6 +15,12 @@ dist/
 *.egg-info/
 *.egg
 pip-wheel-metadata/
+msix_out/
+msix_stage/
+*.msix
+*.appx
+*.appxbundle
+*.msixupload
 
 # PyInstaller working files
 *.pkg
@@ -32,6 +38,7 @@ htmlcov/
 # Logs and runtime output
 logs/
 *.log
+target_history.json
 
 # OS/editor noise
 .DS_Store
