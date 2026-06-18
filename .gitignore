@@ -12,11 +12,15 @@ ENV/
 # Build and packaging artifacts
 build/
 dist/
+build_store/
+dist_store/
+dist_portable/
 *.egg-info/
 *.egg
 pip-wheel-metadata/
 msix_out/
 msix_stage/
+msix_stage_store/
 *.msix
 *.appx
 *.appxbundle

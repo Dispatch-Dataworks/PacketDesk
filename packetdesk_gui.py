@@ -28,6 +28,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from typing import Deque, Dict, List, Optional, Tuple
@@ -66,6 +67,26 @@ COMMON_TARGETS = [
 def _resource_path(*parts: str) -> str:
     base_path = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
     return os.path.join(base_path, *parts)
+
+
+def _app_data_dir() -> str:
+    # Store/MSIX installs are read-only under WindowsApps, so runtime files must go to user-writable storage.
+    candidates = [
+        QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.AppDataLocation),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""), APP_NAME),
+        os.path.join(os.path.expanduser("~"), f".{APP_NAME.lower()}"),
+    ]
+    for path in candidates:
+        if not path:
+            continue
+        try:
+            os.makedirs(path, exist_ok=True)
+            return path
+        except Exception:
+            continue
+    fallback = os.path.join(tempfile.gettempdir(), APP_NAME)
+    os.makedirs(fallback, exist_ok=True)
+    return fallback
 
 
 class ReverseDNSResolver:
@@ -941,16 +962,35 @@ class TargetTab(QtWidgets.QWidget):
 
         interval = float(self.interval_combo.currentData())
         retrace = int(self.retrace_combo.currentData())
-        self._last_log_path = self._build_log_file_path(target)
+        primary_log_path = self._build_log_file_path(target)
+        fallback_log_path = self._build_log_file_path(target, use_temp_fallback=True)
+        self._last_log_path = primary_log_path
+
+        self._worker = None
+        startup_error: Optional[Exception] = None
+        for candidate_path in (primary_log_path, fallback_log_path):
+            try:
+                self._worker = MonitorWorker(
+                    target,
+                    interval,
+                    retrace,
+                    resolve_names=self.rdns_checkbox.isChecked(),
+                    log_file_path=candidate_path,
+                )
+                self._last_log_path = candidate_path
+                break
+            except Exception as exc:
+                startup_error = exc
+                self._worker = None
+
+        if self._worker is None:
+            self._worker_thread = None
+            message = f"Unable to start monitor: {startup_error}"
+            self._set_status(message)
+            QtWidgets.QMessageBox.critical(self, APP_NAME, message)
+            return
 
         self._worker_thread = QtCore.QThread(self)
-        self._worker = MonitorWorker(
-            target,
-            interval,
-            retrace,
-            resolve_names=self.rdns_checkbox.isChecked(),
-            log_file_path=self._last_log_path,
-        )
         self._worker.moveToThread(self._worker_thread)
         self._worker_thread.started.connect(self._worker.run)
         self._worker.status.connect(self._set_status)
@@ -1059,10 +1099,14 @@ class TargetTab(QtWidgets.QWidget):
             self._set_status("Stopped.")
         self.snapshot_changed.emit(self.snapshot())
 
-    def _build_log_file_path(self, target: str) -> str:
+    def _build_log_file_path(self, target: str, use_temp_fallback: bool = False) -> str:
         safe_target = re.sub(r"[^A-Za-z0-9_.-]+", "_", target).strip("_") or "target"
         stamp = time.strftime("%Y%m%d_%H%M%S")
-        base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), LOG_DIR_NAME)
+        if use_temp_fallback:
+            base_root = os.path.join(tempfile.gettempdir(), APP_NAME)
+        else:
+            base_root = _app_data_dir()
+        base_dir = os.path.join(base_root, LOG_DIR_NAME)
         return os.path.join(base_dir, f"{safe_target}_{stamp}.csv")
 
     def _choose_final_target_hop(self, rows: List[Dict[str, object]]) -> Optional[int]:
@@ -3914,7 +3958,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sync_statusbar_from_active_tab()
 
     def _history_file_path(self) -> str:
-        base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), LOG_DIR_NAME)
+        base_dir = os.path.join(_app_data_dir(), LOG_DIR_NAME)
         return os.path.join(base_dir, TARGET_HISTORY_FILE)
 
     def _load_target_history(self) -> None:

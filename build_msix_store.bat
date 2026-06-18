@@ -19,9 +19,12 @@ REM ================================================================
 set "APP_NAME=PacketDesk"
 set "APP_DISPLAY_NAME=PacketDesk"
 set "APP_DESCRIPTION=Windows network diagnostics, route monitoring, DNS tools, and connectivity checks."
-set "APP_VERSION=1.0.0.0"
+set "APP_VERSION=1.0.0.1"
 set "APP_ARCH=x64"
 set "PY_MAIN=packetdesk_gui.py"
+set "PYI_DIST=dist_store"
+set "PYI_BUILD=build_store"
+set "MSIX_STAGE=msix_stage_store"
 
 REM REQUIRED: replace these two with the exact Partner Center values.
 set "STORE_IDENTITY_NAME=DispatchDataworksLLC.PacketDesk"
@@ -117,9 +120,9 @@ if errorlevel 1 goto :fail
 set "ICON_ARG="
 if exist "assets\packetdesk.ico" set "ICON_ARG=--icon assets\packetdesk.ico"
 
-rmdir /s /q build 2>nul
-rmdir /s /q dist 2>nul
-rmdir /s /q msix_stage 2>nul
+rmdir /s /q "%PYI_BUILD%" 2>nul
+rmdir /s /q "%PYI_DIST%" 2>nul
+rmdir /s /q "%MSIX_STAGE%" 2>nul
 mkdir msix_out 2>nul
 
 echo.
@@ -130,26 +133,27 @@ echo.
   --clean ^
   --windowed ^
   --onedir ^
+  --workpath "%PYI_BUILD%" ^
+  --distpath "%PYI_DIST%" ^
   --name "%APP_NAME%" ^
   --hidden-import pyqtgraph.graphicsItems.DateAxisItem ^
   %ICON_ARG% ^
   "%PY_MAIN%"
 if errorlevel 1 goto :fail
 
-if not exist "dist\%APP_NAME%\%APP_NAME%.exe" (
+if not exist "%PYI_DIST%\%APP_NAME%\%APP_NAME%.exe" (
   echo.
-  echo ERROR: PyInstaller did not create dist\%APP_NAME%\%APP_NAME%.exe
+  echo ERROR: PyInstaller did not create %PYI_DIST%\%APP_NAME%\%APP_NAME%.exe
   echo.
   pause
   exit /b 1
 )
 
-set "MSIX_STAGE=msix_stage"
 set "APP_STAGE=%MSIX_STAGE%\%APP_NAME%"
 mkdir "%APP_STAGE%"
 if errorlevel 1 goto :fail
 
-xcopy "dist\%APP_NAME%\*" "%APP_STAGE%\" /E /I /Y >nul
+xcopy "%PYI_DIST%\%APP_NAME%\*" "%APP_STAGE%\" /E /I /Y >nul
 if errorlevel 1 goto :fail
 
 if not exist "tools\prepare_msix_store_package.ps1" (

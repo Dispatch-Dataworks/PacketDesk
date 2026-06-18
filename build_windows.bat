@@ -6,6 +6,8 @@ rem Use a short path for the virtual environment to avoid Windows long-path inst
 set "VENV_DIR=%TEMP%\ppgui_venv"
 set "PYI_WORK=%TEMP%\ppgui_pyi_work"
 set "LOCAL_RELEASE_DIR=%LOCALAPPDATA%\PacketDesk"
+set "PORTABLE_DIST_DIR=dist_portable"
+set "PORTABLE_EXE=%PORTABLE_DIST_DIR%\PacketDesk.exe"
 
 where python >nul 2>nul
 if errorlevel 1 (
@@ -23,12 +25,12 @@ python -m pip install -r requirements.txt
 
 if exist "%PYI_WORK%" rmdir /s /q "%PYI_WORK%"
 
-if exist dist\PacketDesk.exe (
+if exist "%PORTABLE_EXE%" (
   taskkill /f /im PacketDesk.exe >nul 2>nul
-  del /f /q dist\PacketDesk.exe >nul 2>nul
-  if exist dist\PacketDesk.exe (
+  del /f /q "%PORTABLE_EXE%" >nul 2>nul
+  if exist "%PORTABLE_EXE%" (
     echo.
-    echo Build cannot continue because dist\PacketDesk.exe is locked.
+    echo Build cannot continue because %PORTABLE_EXE% is locked.
     echo Close PacketDesk and disable preview/scan locks on the file, then run again.
     pause
     exit /b 1
@@ -43,6 +45,7 @@ python -m PyInstaller ^
   --add-data "logo.ico;." ^
   --add-data "logo.png;." ^
   --icon "logo.ico" ^
+  --distpath "%PORTABLE_DIST_DIR%" ^
   --workpath "%PYI_WORK%" ^
   --name PacketDesk ^
   packetdesk_gui.py
@@ -50,20 +53,20 @@ python -m PyInstaller ^
 if errorlevel 1 (
   echo.
   echo Build failed. PyInstaller returned a non-zero exit code.
-  if exist dist\PacketDesk.exe echo Note: dist\PacketDesk.exe exists from a previous or partial build.
+  if exist "%PORTABLE_EXE%" echo Note: %PORTABLE_EXE% exists from a previous or partial build.
   pause
   exit /b 1
 )
 
-if exist dist\PacketDesk.exe (
+if exist "%PORTABLE_EXE%" (
   echo.
-  echo Build complete: dist\PacketDesk.exe
+  echo Build complete: %PORTABLE_EXE%
   if not exist "%LOCAL_RELEASE_DIR%" mkdir "%LOCAL_RELEASE_DIR%"
-  copy /y dist\PacketDesk.exe "%LOCAL_RELEASE_DIR%\PacketDesk.exe" >nul
+  copy /y "%PORTABLE_EXE%" "%LOCAL_RELEASE_DIR%\PacketDesk.exe" >nul
   if errorlevel 1 (
     echo.
     echo Warning: Could not copy to %LOCAL_RELEASE_DIR%\PacketDesk.exe
-    echo Run dist\PacketDesk.exe directly after OneDrive finishes syncing.
+    echo Run %PORTABLE_EXE% directly after OneDrive finishes syncing.
   ) else (
     echo Stable local copy: %LOCAL_RELEASE_DIR%\PacketDesk.exe
   )
