@@ -3076,6 +3076,96 @@ class TlsInspectorWorker(QtCore.QObject):
     def cancel(self) -> None:
         self._cancelled.set()
 
+    def _decode_der_cert(self, der_cert: bytes) -> tuple[Dict[str, object], str]:
+        """Decode a DER certificate into a dict shape similar to getpeercert()."""
+        import ssl
+        import tempfile
+        import os
+
+        if not der_cert:
+            return {}, ""
+
+        pem_cert = ssl.DER_cert_to_PEM_cert(der_cert)
+        cert_info: Dict[str, object] = {}
+
+        # _test_decode_cert is private but provides rich parsed cert details from PEM.
+        with tempfile.NamedTemporaryFile("w", delete=False, suffix=".pem", encoding="utf-8") as tmp:
+            tmp.write(pem_cert)
+            tmp_path = tmp.name
+        try:
+            cert_info = ssl._ssl._test_decode_cert(tmp_path)  # type: ignore[attr-defined]
+        except Exception:
+            cert_info = {}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+        return cert_info or {}, pem_cert
+
+    def _match_hostname_from_cert(self, cert: Dict[str, object], host: str) -> Tuple[bool, str]:
+        """Best-effort hostname/IP match using SAN first, then CN fallback."""
+        host_l = (host or "").strip().lower()
+        if not host_l:
+            return False, "empty target host"
+
+        def _dns_match(pattern: str, value: str) -> bool:
+            p = (pattern or "").strip().lower()
+            v = (value or "").strip().lower()
+            if not p or not v:
+                return False
+            if p == v:
+                return True
+            if p.startswith("*."):
+                suffix = p[1:]  # includes leading dot
+                # Only match a single label wildcard (e.g. *.example.com -> a.example.com)
+                return v.endswith(suffix) and v.count(".") == p.count(".")
+            return False
+
+        san_entries = cert.get("subjectAltName", ()) or ()
+        dns_sans = [str(v) for t, v in san_entries if str(t).upper() == "DNS"]
+        ip_sans = [str(v) for t, v in san_entries if str(t).upper() == "IP ADDRESS"]
+
+        host_ip: Optional[ipaddress._BaseAddress]
+        try:
+            host_ip = ipaddress.ip_address(host_l)
+        except ValueError:
+            host_ip = None
+
+        if host_ip is not None:
+            for ip_san in ip_sans:
+                try:
+                    if host_ip == ipaddress.ip_address(ip_san.strip()):
+                        return True, f"matched IP SAN: {ip_san}"
+                except ValueError:
+                    continue
+            if ip_sans:
+                return False, f"target IP {host} not present in IP SANs"
+            return False, "target is an IP but certificate has no IP SAN entries"
+
+        for dns_san in dns_sans:
+            if _dns_match(dns_san, host_l):
+                return True, f"matched DNS SAN: {dns_san}"
+        if dns_sans:
+            return False, f"host {host} not present in DNS SANs"
+
+        # CN fallback only when SANs are absent.
+        cn = ""
+        for rdn in cert.get("subject", ()) or ():
+            for k, v in rdn:
+                if k == "commonName":
+                    cn = str(v)
+                    break
+            if cn:
+                break
+
+        if cn and _dns_match(cn, host_l):
+            return True, f"matched Common Name: {cn}"
+        if cn:
+            return False, f"host {host} does not match Common Name {cn}"
+        return False, "certificate has no SAN and no Common Name"
+
     @QtCore.Slot()
     def run(self) -> None:
         try:
@@ -3108,22 +3198,40 @@ class TlsInspectorWorker(QtCore.QObject):
             return
 
         ctx = ssl.create_default_context()
+        cert: Dict[str, object] = {}
+        cert_pem = ""
         tls_version = ""
         cipher_name = ""
         cipher_bits = ""
+        verification_ok = True
+        verify_code: Optional[int] = None
+        verify_message = ""
 
         self.output.emit(f"Connecting (TLS) to {self.host}:{self.port} ...")
         try:
             with socket.create_connection((self.host, self.port), timeout=self.TIMEOUT) as raw:
                 with ctx.wrap_socket(raw, server_hostname=self.host) as tls:
-                    cert = tls.getpeercert()
+                    cert = tls.getpeercert() or {}
+                    cert_der = tls.getpeercert(binary_form=True)
+                    if cert_der:
+                        decoded, pem = self._decode_der_cert(cert_der)
+                        if decoded:
+                            cert = decoded
+                        cert_pem = pem
                     tls_version = tls.version() or ""
                     cipher_info = tls.cipher()          # (name, proto, bits)
                     if cipher_info:
                         cipher_name = cipher_info[0] or ""
                         cipher_bits = str(cipher_info[2]) if cipher_info[2] else ""
         except ssl.SSLCertVerificationError as exc:
+            verification_ok = False
+            verify_code = getattr(exc, "verify_code", None)
+            verify_message = getattr(exc, "verify_message", "") or str(exc)
             self.output.emit(f"  TLS verification failed: {exc}")
+            if verify_code is not None:
+                self.output.emit(f"  Verification code: {verify_code}")
+            if verify_message:
+                self.output.emit(f"  Verification reason: {verify_message}")
             self.output.emit("  (Attempting without verification to retrieve certificate info...)")
             self.output.emit("")
             ctx_noverify = ssl.create_default_context()
@@ -3132,18 +3240,13 @@ class TlsInspectorWorker(QtCore.QObject):
             try:
                 with socket.create_connection((self.host, self.port), timeout=self.TIMEOUT) as raw:
                     with ctx_noverify.wrap_socket(raw, server_hostname=self.host) as tls:
-                        cert = tls.getpeercert(binary_form=True)
+                        cert_der = tls.getpeercert(binary_form=True)
+                        cert, cert_pem = self._decode_der_cert(cert_der)
                         tls_version = tls.version() or ""
                         cipher_info = tls.cipher()
                         if cipher_info:
                             cipher_name = cipher_info[0] or ""
                             cipher_bits = str(cipher_info[2]) if cipher_info[2] else ""
-                        # Decode DER to structured for display
-                        import ssl as _ssl
-                        cert = _ssl.DER_cert_to_PEM_cert(cert)
-                        self.output.emit("  Raw PEM certificate (verification failed):")
-                        self.output.emit(cert)
-                        return
             except Exception as exc2:
                 self.output.emit(f"  Could not retrieve certificate: {exc2}")
                 return
@@ -3156,6 +3259,10 @@ class TlsInspectorWorker(QtCore.QObject):
 
         if not cert:
             self.output.emit("  No certificate data returned.")
+            if cert_pem:
+                self.output.emit("")
+                self.output.emit("Raw PEM certificate:")
+                self.output.emit(cert_pem)
             return
 
         self.output.emit("")
@@ -3164,6 +3271,14 @@ class TlsInspectorWorker(QtCore.QObject):
         self.output.emit(f"TLS version:      {tls_version}")
         bits_label = f"  ({cipher_bits}-bit)" if cipher_bits else ""
         self.output.emit(f"Cipher suite:     {cipher_name}{bits_label}")
+        if verification_ok:
+            self.output.emit("Certificate verify: PASS")
+        else:
+            self.output.emit("Certificate verify: FAIL")
+            if verify_code is not None:
+                self.output.emit(f"  Verify code:    {verify_code}")
+            if verify_message:
+                self.output.emit(f"  Verify reason:  {verify_message}")
         self.output.emit("")
 
         # --- Subject ---
@@ -3192,10 +3307,12 @@ class TlsInspectorWorker(QtCore.QObject):
         not_before_str = cert.get("notBefore", "")
         not_after_str  = cert.get("notAfter", "")
         fmt = "%b %d %H:%M:%S %Y %Z"
+        not_before: Optional[datetime.datetime] = None
+        not_after: Optional[datetime.datetime] = None
+        now = datetime.datetime.utcnow()
         try:
             not_before = datetime.datetime.strptime(not_before_str, fmt)
             not_after  = datetime.datetime.strptime(not_after_str, fmt)
-            now = datetime.datetime.utcnow()
             days_left = (not_after - now).days
             flag = ""
             if days_left < 0:
@@ -3217,6 +3334,37 @@ class TlsInspectorWorker(QtCore.QObject):
                 self.output.emit(f"  {san_type}: {san_val}")
         else:
             self.output.emit("Subject Alt Names: (none)")
+
+        # --- Diagnostics ---
+        self.output.emit("")
+        self.output.emit("Diagnostics:")
+
+        # Hostname coverage check gives a concrete reason for many validation failures.
+        host_ok, host_reason = self._match_hostname_from_cert(cert, self.host)
+        host_status = "PASS" if host_ok else "FAIL"
+        self.output.emit(f"  Hostname check: {host_status} ({host_reason})")
+
+        subject_pairs = sorted((k, v) for rdn in cert.get("subject", ()) for k, v in rdn)
+        issuer_pairs = sorted((k, v) for rdn in cert.get("issuer", ()) for k, v in rdn)
+        if subject_pairs and issuer_pairs and subject_pairs == issuer_pairs:
+            self.output.emit("  Chain hint: certificate appears self-signed (subject == issuer)")
+
+        if not sans:
+            self.output.emit("  SAN check: no SAN entries present; modern clients generally require SAN")
+
+        if not_before and now < not_before:
+            self.output.emit("  Time validity: certificate is not yet valid")
+        elif not_after and now > not_after:
+            self.output.emit("  Time validity: certificate is expired")
+        elif not_before and not_after:
+            self.output.emit("  Time validity: certificate is currently within validity window")
+        else:
+            self.output.emit("  Time validity: unable to parse notBefore/notAfter fields")
+
+        if not verification_ok and cert_pem:
+            self.output.emit("")
+            self.output.emit("Raw PEM certificate (verification failed):")
+            self.output.emit(cert_pem)
 
 
 class ToolsTab(QtWidgets.QWidget):

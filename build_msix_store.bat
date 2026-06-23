@@ -19,7 +19,7 @@ REM ================================================================
 set "APP_NAME=PacketDesk"
 set "APP_DISPLAY_NAME=PacketDesk"
 set "APP_DESCRIPTION=Windows network diagnostics, route monitoring, DNS tools, and connectivity checks."
-set "APP_VERSION=1.0.1.0"
+set "APP_VERSION=1.1.0.0"
 set "APP_ARCH=x64"
 set "PY_MAIN=packetdesk_gui.py"
 set "PYI_DIST=dist_store"
